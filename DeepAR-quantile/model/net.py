@@ -117,7 +117,7 @@ class Net(nn.Module):
                 decoder_cell = cell
                 # alpha: ([num_steps, batch_size, 1])
                 # alpha = np.random.uniform(x.shape[0], x.shape[1], 1)
-                alpha = torch.rand([x.shape[0], x.shape[1], 1])
+                alpha = self.get_random_alpha([x.shape[0], x.shape[1], 1])
                 for t in range(self.params.predict_steps):
                     mu_de, sigma_de, y_pred_de, decoder_hidden, decoder_cell = \
                         self(x[self.params.predict_start + t].unsqueeze(0), alpha[self.params.predict_start + t],
@@ -141,7 +141,7 @@ class Net(nn.Module):
             sample_sigma = torch.zeros(batch_size, self.params.predict_steps, device=self.params.device)
             sample_y_pred = torch.zeros(batch_size, self.params.predict_steps, device=self.params.device)
             # alpha is vector of 0.5's: ([num_steps, batch_size, 1])
-            alpha = 0.5*torch.ones([x.shape[0], x.shape[1], 1])
+            alpha = self.get_constant_alpha([x.shape[0], x.shape[1], 1], 0.5)
             for t in range(self.params.predict_steps):
                 mu_de, sigma_de, y_pred_de, decoder_hidden, decoder_cell = \
                     self(x[self.params.predict_start + t].unsqueeze(0), alpha[self.params.predict_start + t],
