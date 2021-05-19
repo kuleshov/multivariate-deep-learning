@@ -72,7 +72,7 @@ def evaluate(model, loss_fn, test_loader, params, plot_num, sample=True):
               if t > 0 and torch.sum(zero_index) > 0:
                   test_batch[t,zero_index,0] = mu[zero_index]
 
-              alpha = 0.5*torch.ones([test_batch[t].shape[0], 1])
+              alpha = model.get_constant_alpha([test_batch[t].shape[0], 1], 0.5)
               mu, sigma, y_pred, hidden, cell = model(test_batch[t].unsqueeze(0), alpha, id_batch, hidden, cell)
               input_mu[:,t] = v_batch[:, 0] * mu + v_batch[:, 1]
               input_sigma[:,t] = v_batch[:, 0] * sigma

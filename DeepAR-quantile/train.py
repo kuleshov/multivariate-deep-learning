@@ -74,7 +74,7 @@ def train(model: nn.Module,
             zero_index = (train_batch[t, :, 0] == 0)
             if t > 0 and torch.sum(zero_index) > 0:
                 train_batch[t, zero_index, 0] = mu[zero_index]
-            alpha = torch.rand([train_batch[t].shape[0], 1])
+            alpha = model.get_random_alpha([train_batch[t].shape[0], 1])
             mu, sigma, y_pred, hidden, cell = model(train_batch[t].unsqueeze_(0).clone(), alpha, idx, hidden, cell)
             loss += loss_fn(mu, sigma, y_pred, alpha, labels_batch[t])
 
@@ -230,7 +230,7 @@ if __name__ == '__main__':
         params.device = torch.device('cuda')
         # torch.cuda.manual_seed(240)
         logger.info('Using Cuda...')
-        model = net.Net(params).cuda()
+        model = net.Net(params, cuda=True).cuda()
     else:
         params.device = torch.device('cpu')
         # torch.manual_seed(230)

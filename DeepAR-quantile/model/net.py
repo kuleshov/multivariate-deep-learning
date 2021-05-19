@@ -11,12 +11,13 @@ import logging
 logger = logging.getLogger('DeepAR.Net')
 
 class Net(nn.Module):
-    def __init__(self, params):
+    def __init__(self, params, cuda=False):
         '''
         We define a recurrent network that predicts the future values of a time-dependent variable based on
         past inputs and covariates.
         '''
         super(Net, self).__init__()
+        self.cuda = cuda
         self.params = params
         self.embedding = nn.Embedding(params.num_class, params.embedding_dim)
 
@@ -88,6 +89,20 @@ class Net(nn.Module):
     def init_cell(self, input_size):
         return torch.zeros(self.params.lstm_layers, input_size, self.params.lstm_hidden_dim, device=self.params.device)
 
+    def get_random_alpha(self, shape):
+        # FIXME: there has to be a proper way of doing this
+        if self.cuda:
+            return torch.rand(shape).cuda()
+        else:
+            return torch.rand(shape)
+
+    def get_constant_alpha(self, shape, value):
+        # FIXME: there has to be a proper way of doing this
+        alpha = value*torch.ones(shape)
+        if self.cuda:
+            alpha = alpha.cuda()
+        return alpha
+
     def test(self, x, v_batch, id_batch, hidden, cell, sampling=False):
         '''
         Args:
@@ -142,7 +157,10 @@ class Net(nn.Module):
 
 
 def loss_fn(mu: Variable, sigma: Variable, y_pred: Variable, alpha: Variable, labels: Variable):
-    return l2_loss_fn(mu, sigma, labels) + quantile_loss_fn(y_pred, alpha, labels)
+    return (
+        l2_loss_fn(mu, sigma, labels) + 
+        quantile_loss_fn(y_pred, alpha, labels)
+    )
 
 def l2_loss_fn(mu: Variable, sigma: Variable, labels: Variable):
     '''
