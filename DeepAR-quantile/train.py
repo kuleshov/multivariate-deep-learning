@@ -230,7 +230,7 @@ if __name__ == '__main__':
         params.device = torch.device('cuda')
         # torch.cuda.manual_seed(240)
         logger.info('Using Cuda...')
-        model = net.Net(params, cuda=True).cuda()
+        model = net.Net(params, use_cuda=True).cuda()
     else:
         params.device = torch.device('cpu')
         # torch.manual_seed(230)

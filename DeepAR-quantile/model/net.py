@@ -11,13 +11,13 @@ import logging
 logger = logging.getLogger('DeepAR.Net')
 
 class Net(nn.Module):
-    def __init__(self, params, cuda=False):
+    def __init__(self, params, use_cuda=False):
         '''
         We define a recurrent network that predicts the future values of a time-dependent variable based on
         past inputs and covariates.
         '''
         super(Net, self).__init__()
-        self.cuda = cuda
+        self.use_cuda = use_cuda
         self.params = params
         self.embedding = nn.Embedding(params.num_class, params.embedding_dim)
 
@@ -91,7 +91,7 @@ class Net(nn.Module):
 
     def get_random_alpha(self, shape):
         # FIXME: there has to be a proper way of doing this
-        if self.cuda:
+        if self.use_cuda:
             return torch.rand(shape).cuda()
         else:
             return torch.rand(shape)
@@ -99,7 +99,7 @@ class Net(nn.Module):
     def get_constant_alpha(self, shape, value):
         # FIXME: there has to be a proper way of doing this
         alpha = value*torch.ones(shape)
-        if self.cuda:
+        if self.use_cuda:
             alpha = alpha.cuda()
         return alpha
 
