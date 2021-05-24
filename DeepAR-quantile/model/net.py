@@ -103,10 +103,12 @@ class Net(nn.Module):
             alpha = alpha.cuda()
         return alpha
 
-    def test(self, x, v_batch, id_batch, hidden, cell, sampling=False):
+    def test(self, x, v_batch, id_batch, hidden, cell, sampling=False, sampling_method='quantile'):
         '''
         Args:
             x: ([num_steps, batch_size, 1+cov_dim])
+        Returns:
+            samples: ([sample_times, batch_size, pred_steps])
         '''
         batch_size = x.shape[1]
         if sampling:
@@ -122,13 +124,17 @@ class Net(nn.Module):
                     mu_de, sigma_de, y_pred_de, decoder_hidden, decoder_cell = \
                         self(x[self.params.predict_start + t].unsqueeze(0), alpha[self.params.predict_start + t],
                             id_batch, decoder_hidden, decoder_cell)
-                    # gaussian = torch.distributions.normal.Normal(mu_de, sigma_de)
-                    # pred = gaussian.sample()  # not scaled
-                    # samples[j, :, t] = pred * v_batch[:, 0] + v_batch[:, 1]
-                    samples[j, :, t] = y_pred_de * v_batch[:, 0] + v_batch[:, 1]
+                    if sampling_method=='quantile':
+                        samples[j, :, t] = y_pred_de * v_batch[:, 0] + v_batch[:, 1]
+                    elif sampling_method=='gaussian':
+                        gaussian = torch.distributions.normal.Normal(mu_de, sigma_de)
+                        pred = gaussian.sample()  # not scaled
+                        samples[j, :, t] = pred * v_batch[:, 0] + v_batch[:, 1]
                     if t < (self.params.predict_steps - 1):
-                        # x[self.params.predict_start + t + 1, :, 0] = pred
-                        x[self.params.predict_start + t + 1, :, 0] = y_pred_de
+                        if sampling_method=='gaussian':
+                            x[self.params.predict_start + t + 1, :, 0] = pred
+                        elif sampling_method=='quantile':
+                            x[self.params.predict_start + t + 1, :, 0] = y_pred_de
 
             sample_mu = torch.median(samples, dim=0)[0]
             sample_sigma = samples.std(dim=0)
@@ -150,9 +156,11 @@ class Net(nn.Module):
                 sample_sigma[:, t] = sigma_de * v_batch[:, 0]
                 sample_y_pred[:, t] = y_pred_de * v_batch[:, 0] + v_batch[:, 1] 
                 if t < (self.params.predict_steps - 1):
-                    # x[self.params.predict_start + t + 1, :, 0] = mu_de
-                    x[self.params.predict_start + t + 1, :, 0] = y_pred_de
-            # return sample_mu, sample_sigma
+                    if sampling_method=='gaussian':
+                        x[self.params.predict_start + t + 1, :, 0] = mu_de
+                    elif sampling_method=='quantile':
+                        x[self.params.predict_start + t + 1, :, 0] = y_pred_de
+
             return sample_mu, sample_sigma, sample_y_pred
 
 
@@ -186,6 +194,7 @@ def quantile_loss_fn(y_pred: Variable, alpha: Variable, labels: Variable):
     Returns:
         loss: (Variable) average log-likelihood loss across the batch
     '''
+    alpha = torch.squeeze(alpha) # just in case again
     zero_index = (labels != 0)
     loss_vector = torch.maximum(
       alpha[zero_index] * (labels[zero_index] - y_pred[zero_index]), 
@@ -236,10 +245,30 @@ def accuracy_ROU(rou: float, samples: torch.Tensor, labels: torch.Tensor, relati
     else:
         return [numerator, denominator]
 
+def calibration(samples: torch.Tensor, labels: torch.Tensor, relative = False):
+    numerator = 0
+    denominator = 0
+    pred_samples = samples.shape[0]
+    for t in range(labels.shape[1]):
+        zero_index = (labels[:, t] != 0)
+        if zero_index.numel() > 0:
+            rou_th = math.ceil(pred_samples * (1 - rou))
+            rou_pred = torch.topk(samples[:, zero_index, t], dim=0, k=rou_th)[0][-1, :]
+            abs_diff = labels[:, t][zero_index] - rou_pred
+            numerator += 2 * (torch.sum(rou * abs_diff[labels[:, t][zero_index] > rou_pred]) - torch.sum(
+                (1 - rou) * abs_diff[labels[:, t][zero_index] <= rou_pred])).item()
+            denominator += torch.sum(labels[:, t][zero_index]).item()
 
-def accuracy_ND_(mu: torch.Tensor, labels: torch.Tensor, relative = False):
-    mu = mu.cpu().detach().numpy()
-    labels = labels.cpu().detach().numpy()
+    if relative:
+        return [numerator, torch.sum(labels != 0).item()]
+    else:
+        return [numerator, denominator]        
+
+
+def accuracy_ND_(mu: torch.Tensor, labels: torch.Tensor, relative = False, use_torch=True):
+    if use_torch:
+        mu = mu.cpu().detach().numpy()
+        labels = labels.cpu().detach().numpy()
 
     mu[labels == 0] = 0.
 
@@ -260,9 +289,10 @@ def accuracy_ND_(mu: torch.Tensor, labels: torch.Tensor, relative = False):
         return result
 
 
-def accuracy_RMSE_(mu: torch.Tensor, labels: torch.Tensor, relative = False):
-    mu = mu.cpu().detach().numpy()
-    labels = labels.cpu().detach().numpy()
+def accuracy_RMSE_(mu: torch.Tensor, labels: torch.Tensor, relative = False, use_torch=True):
+    if use_torch:
+        mu = mu.cpu().detach().numpy()
+        labels = labels.cpu().detach().numpy()
 
     mask = labels == 0
     mu[mask] = 0.

@@ -43,6 +43,7 @@ def evaluate(model, loss_fn, test_loader, params, plot_num, sample=True):
     model.eval()
     with torch.no_grad():
       plot_batch = np.random.randint(len(test_loader)-1)
+      plot_batch = 0
 
       summary_metric = {}
       raw_metrics = utils.init_metrics(sample=sample)
@@ -52,7 +53,12 @@ def evaluate(model, loss_fn, test_loader, params, plot_num, sample=True):
       # id_batch ([batch_size]): one integer denoting the time series id;
       # v ([batch_size, 2]): scaling factor for each window;
       # labels ([batch_size, train_window]): z_{1:T}.
+      samples_list, mu_pred_list, sigma_pred_list  = [], [], [] # for gaussain
+      samples_y_pred_list = [] # for quantile
+      labels_list = []
+      input_mu_list, input_sigma_list, input_y_pred_list  = [], [], []
       for i, (test_batch, id_batch, v, labels) in enumerate(tqdm(test_loader)):
+          # if i >= 1: break
           
           test_batch = test_batch.permute(1, 0, 2).to(torch.float32).to(params.device)
           #id_batch_save = id_batch
@@ -62,6 +68,7 @@ def evaluate(model, loss_fn, test_loader, params, plot_num, sample=True):
           batch_size = test_batch.shape[1]
           input_mu = torch.zeros(batch_size, params.test_predict_start, device=params.device) # scaled
           input_sigma = torch.zeros(batch_size, params.test_predict_start, device=params.device) # scaled
+          input_y_pred = torch.zeros(batch_size, params.test_predict_start, device=params.device) # scaled
           hidden = model.init_hidden(batch_size)
           cell = model.init_cell(batch_size)
 
@@ -71,18 +78,58 @@ def evaluate(model, loss_fn, test_loader, params, plot_num, sample=True):
               if t > 0 and torch.sum(zero_index) > 0:
                   test_batch[t,zero_index,0] = mu[zero_index]
 
-              mu, sigma, hidden, cell = model(test_batch[t].unsqueeze(0), id_batch, hidden, cell)
+              alpha = model.get_constant_alpha([test_batch[t].shape[0], 1], 0.5)
+              mu, sigma, y_pred, hidden, cell = model(test_batch[t].unsqueeze(0), alpha, id_batch, hidden, cell)
               input_mu[:,t] = v_batch[:, 0] * mu + v_batch[:, 1]
               input_sigma[:,t] = v_batch[:, 0] * sigma
+              input_y_pred[:,t] = v_batch[:, 0] * y_pred + v_batch[:, 1]
+
+          input_mu_list += [input_mu]
+          input_sigma_list += [input_sigma]
+          input_y_pred_list += [input_y_pred]
 
           if sample:
-              samples, sample_mu, sample_sigma = model.test(test_batch, v_batch, id_batch, hidden, cell, sampling=True)
-              raw_metrics = utils.update_metrics(raw_metrics, input_mu, input_sigma, sample_mu, labels, params.test_predict_start, samples, relative = params.relative_metrics) # uncomment
+              samples_gauss, sample_mu_gauss, sample_sigma_gauss = model.test(test_batch, v_batch, id_batch, hidden, cell, sampling=True, sampling_method='gaussian')
+              samples_quant, sample_mu_quant, sample_sigma_quant = model.test(test_batch, v_batch, id_batch, hidden, cell, sampling=True, sampling_method='quantile')
+              # raw_metrics = utils.update_metrics(raw_metrics, input_mu, input_sigma, sample_mu, labels, params.test_predict_start, samples, relative = params.relative_metrics) # uncomment
+              raw_metrics = utils.update_metrics(
+                raw_metrics=raw_metrics,
+                input_mu=input_mu, 
+                input_sigma=input_sigma, 
+                sample_mu=sample_mu_gauss, 
+                input_y_pred=input_y_pred, 
+                sample_y_pred=sample_mu_quant, 
+                labels=labels, 
+                predict_start=params.test_predict_start,
+                samples=samples_gauss,
+                samples_y_pred=samples_quant,
+                relative = params.relative_metrics
+              )
           else:
-              sample_mu, sample_sigma = model.test(test_batch, v_batch, id_batch, hidden, cell)
-              raw_metrics = utils.update_metrics(raw_metrics, input_mu, input_sigma, sample_mu, labels, params.test_predict_start, relative = params.relative_metrics) # uncomment
+              sample_mu_gauss, sample_sigma_gauss, _ = model.test(test_batch, v_batch, id_batch, hidden, cell, sampling_method='gaussian')
+              _, sample_sigma_quant, sample_y_pred_quant = model.test(test_batch, v_batch, id_batch, hidden, cell, sampling_method='quantile')
+              # raw_metrics = utils.update_metrics(raw_metrics, input_mu, input_sigma, sample_mu, labels, params.test_predict_start, relative = params.relative_metrics) # uncomment
+              # raw_metrics = utils.update_metrics(raw_metrics, input_mu, input_sigma, sample_y_pred, labels, params.test_predict_start, relative = params.relative_metrics) # uncomment
+              raw_metrics = utils.update_metrics(
+                raw_metrics=raw_metrics,
+                input_mu=input_mu, 
+                input_sigma=input_sigma, 
+                sample_mu=sample_mu_gauss, 
+                input_y_pred=input_y_pred, 
+                sample_y_pred=sample_y_pred_quant, 
+                labels=labels, 
+                predict_start=params.test_predict_start,
+                relative = params.relative_metrics
+              )
+              samples_gauss = torch.squeeze(sample_mu_gauss, 1)
+              samples_quant = torch.squeeze(sample_y_pred_quant, 1)
+
+          samples_list += [samples_gauss]
+          samples_y_pred_list += [samples_quant]
+          labels_list += [labels]
 
           if params.save_file:
+              raise NotImplementedError("Didn't test this")
               if i == 0:
                   Y_hat_mean = sample_mu.data.cpu().numpy()
                   Y_hat_sig = sample_sigma.data.cpu().numpy()
@@ -98,11 +145,13 @@ def evaluate(model, loss_fn, test_loader, params, plot_num, sample=True):
           
           if i == plot_batch:
               if sample:
-                  sample_metrics = utils.get_metrics(sample_mu, labels, params.test_predict_start, samples, relative = params.relative_metrics)
+                  sample_metrics_gauss = utils.get_metrics(sample_mu_gauss, labels, params.test_predict_start, samples_gauss, relative = params.relative_metrics)
+                  sample_metrics_quant = utils.get_metrics(sample_mu_quant, labels, params.test_predict_start, samples_quant, relative = params.relative_metrics)
               else:
-                  sample_metrics = utils.get_metrics(sample_mu, labels, params.test_predict_start, relative = params.relative_metrics)                
+                  sample_metrics_gauss = utils.get_metrics(sample_mu_gauss, labels, params.test_predict_start, relative = params.relative_metrics)                
+                  sample_metrics_quant = utils.get_metrics(sample_y_pred_quant, labels, params.test_predict_start, relative = params.relative_metrics)                
               # select 10 from samples with highest error and 10 from the rest
-              top_10_nd_sample = (-sample_metrics['ND']).argsort()[:batch_size // 10]  # hard coded to be 10
+              top_10_nd_sample = (-sample_metrics_quant['ND']).argsort()[:batch_size // 10]  # hard coded to be 10
               chosen = set(top_10_nd_sample.tolist())
               all_samples = set(range(batch_size))
               not_chosen = np.asarray(list(all_samples - chosen))
@@ -117,12 +166,33 @@ def evaluate(model, loss_fn, test_loader, params, plot_num, sample=True):
               combined_sample = np.concatenate((random_sample_10, random_sample_90))
 
               label_plot = labels[combined_sample].data.cpu().numpy()
-              predict_mu = sample_mu[combined_sample].data.cpu().numpy()
-              predict_sigma = sample_sigma[combined_sample].data.cpu().numpy()
+              predict_mu = sample_mu_gauss[combined_sample].data.cpu().numpy()
+              predict_sigma = sample_sigma_gauss[combined_sample].data.cpu().numpy()
               plot_mu = np.concatenate((input_mu[combined_sample].data.cpu().numpy(), predict_mu), axis=1)
               plot_sigma = np.concatenate((input_sigma[combined_sample].data.cpu().numpy(), predict_sigma), axis=1)
-              plot_metrics = {_k: _v[combined_sample] for _k, _v in sample_metrics.items()}
-              plot_eight_windows(params.plot_dir, plot_mu, plot_sigma, label_plot, params.test_window, params.test_predict_start, plot_num, plot_metrics, sample)
+              # print(plot_sigma.shape)
+              # print(predict_sigma.shape)
+              # print(predict_sigma[0])
+              # print(samples_gauss[:,combined_sample,:].data.cpu().numpy().shape)
+              # print(samples_gauss[:,combined_sample,:].data.cpu().numpy()[:,0,0])
+              plot_metrics = {_k: _v[combined_sample] for _k, _v in sample_metrics_gauss.items()}
+              plot_eight_windows(params.plot_dir, plot_mu, plot_sigma, label_plot, params.test_window, params.test_predict_start, '%d-gauss' % plot_num, plot_metrics, sample)
+
+              label_plot = labels[combined_sample].data.cpu().numpy()
+              if sample:
+                predict_mu = sample_mu_quant[combined_sample].data.cpu().numpy()
+              else:
+                predict_mu = sample_y_pred_quant[combined_sample].data.cpu().numpy()
+              predict_sigma = sample_sigma_quant[combined_sample].data.cpu().numpy()
+              plot_mu = np.concatenate((input_y_pred[combined_sample].data.cpu().numpy(), predict_mu), axis=1)
+              plot_sigma = np.concatenate((input_sigma[combined_sample].data.cpu().numpy(), predict_sigma), axis=1)
+              # print(plot_sigma.shape)
+              # print(predict_sigma.shape)
+              # print(predict_sigma[0])
+              # print(samples_quant[:,combined_sample,:].data.cpu().numpy().shape)
+              # print(samples_quant[:,combined_sample,:].data.cpu().numpy()[:,0,0])
+              plot_metrics = {_k: _v[combined_sample] for _k, _v in sample_metrics_quant.items()}
+              plot_eight_windows(params.plot_dir, plot_mu, plot_sigma, label_plot, params.test_window, params.test_predict_start, '%d-quant' % plot_num, plot_metrics, sample)
 
       summary_metric = utils.final_metrics(raw_metrics, sampling=sample)      # uncomment
       metrics_string = '; '.join('{}: {:05.3f}'.format(k, v) for k, v in summary_metric.items()) # uncomment
@@ -133,7 +203,29 @@ def evaluate(model, loss_fn, test_loader, params, plot_num, sample=True):
         #np.save(os.path.join(params.model_dir, 'Z.npy'), Z)
         #np.save(os.path.join(params.model_dir, 'V.npy'), V)
       logger.info('- Full test metrics: ' + metrics_string)  # uncomment
-      
+
+      # if sample:
+      # compute CRPS
+      samples_all = np.concatenate(samples_list, axis=1) # ([sample_times, num_data, pred_steps])
+      samples_all = np.transpose(samples_all, [1,2,0]) # ([num_data, pred_steps, sample_times])
+      labels_all = np.concatenate(labels_list, axis=0) # ([num_data, pred_steps])
+      print('CRPS-gauss:', utils.crps_from_samples(labels_all[:,params.test_predict_start:], samples_all))
+      np.save(os.path.join(params.model_dir, 'labels_all.npy'), labels_all)
+      np.save(os.path.join(params.model_dir, 'samples_all_gauss.npy'), samples_all)
+
+      samples_all = np.concatenate(samples_y_pred_list, axis=1) # ([sample_times, num_data, pred_steps])
+      samples_all = np.transpose(samples_all, [1,2,0]) # ([num_data, pred_steps, sample_times])
+      print('CRPS-quant:', utils.crps_from_samples(labels_all[:,params.test_predict_start:], samples_all))
+      np.save(os.path.join(params.model_dir, 'samples_all_quant.npy'), samples_all)
+
+      input_mu_all = np.concatenate(input_mu_list, axis=0) # ([num_data, pred_steps])
+      input_sigma_all = np.concatenate(input_sigma_list, axis=0) # ([num_data, pred_steps])
+      input_y_pred_all = np.concatenate(input_y_pred_list, axis=0) # ([num_data, pred_steps])
+
+      np.save(os.path.join(params.model_dir, 'input_mu_all.npy'), input_mu_all)
+      np.save(os.path.join(params.model_dir, 'input_sigma_all.npy'), input_sigma_all)
+      np.save(os.path.join(params.model_dir, 'input_y_pred_all.npy'), input_y_pred_all)
+
 
 #	sampl_m = sample_mu.data.cpu().numpy()
 #	sampl_s = sample_sigma.data.cpu().numpy()
@@ -165,7 +257,7 @@ def plot_eight_windows(plot_dir,
                        labels,
                        window_size,
                        predict_start,
-                       plot_num,
+                       plot_name,
                        plot_metrics,
                        sampling=False):
 
@@ -201,7 +293,7 @@ def plot_eight_windows(plot_dir,
 
         ax[k].set_title(plot_metrics_str, fontsize=10)
 
-    f.savefig(os.path.join(plot_dir, str(plot_num) + '.png'))
+    f.savefig(os.path.join(plot_dir, str(plot_name) + '.png'))
     plt.close()
 
 if __name__ == '__main__':

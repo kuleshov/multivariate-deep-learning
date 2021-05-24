@@ -166,14 +166,19 @@ def plot_all_epoch(variable, save_name, location='./figures/'):
 
 def init_metrics(sample=True):
     metrics = {
-        'ND': np.zeros(2),  # numerator, denominator
-        'RMSE': np.zeros(3),  # numerator, denominator, time step count
-        'test_loss': np.zeros(2),
+        'ND-gauss': np.zeros(2),  # numerator, denominator
+        'RMSE-gauss': np.zeros(3),  # numerator, denominator, time step count
+        'ND-quant': np.zeros(2),  # numerator, denominator
+        'RMSE-quant': np.zeros(3),  # numerator, denominator, time step count
+        'test_loss-gauss': np.zeros(2),
     }
     if sample:
-        metrics['rou90'] = np.zeros(2)
-        metrics['rou50'] = np.zeros(2)
-        metrics['rou10'] = np.zeros(2)
+        metrics['rou90-gauss'] = np.zeros(2)
+        metrics['rou50-gauss'] = np.zeros(2)
+        metrics['rou10-gauss'] = np.zeros(2)
+        metrics['rou90-quant'] = np.zeros(2)
+        metrics['rou50-quant'] = np.zeros(2)
+        metrics['rou10-quant'] = np.zeros(2)
     return metrics
 
 def get_metrics(sample_mu, labels, predict_start, samples=None, relative=False):
@@ -181,32 +186,61 @@ def get_metrics(sample_mu, labels, predict_start, samples=None, relative=False):
     metric['ND'] = net.accuracy_ND_(sample_mu, labels[:, predict_start:], relative=relative)
     metric['RMSE'] = net.accuracy_RMSE_(sample_mu, labels[:, predict_start:], relative=relative)
     if samples is not None:
-        metric['rou90'] = net.accuracy_ROU_(0.9, samples, labels[:, predict_start:], relative=relative)
+        metric['rou90'] = net.accuracy_ROU_(0.75, samples, labels[:, predict_start:], relative=relative)
         metric['rou50'] = net.accuracy_ROU_(0.5, samples, labels[:, predict_start:], relative=relative)
-        metric['rou10'] = net.accuracy_ROU_(0.1, samples, labels[:, predict_start:], relative=relative)
+        metric['rou10'] = net.accuracy_ROU_(0.25, samples, labels[:, predict_start:], relative=relative)
     return metric
 
-def update_metrics(raw_metrics, input_mu, input_sigma, sample_mu, labels, predict_start, samples=None, relative=False):
-    raw_metrics['ND'] = raw_metrics['ND'] + net.accuracy_ND(sample_mu, labels[:, predict_start:], relative=relative)
-    raw_metrics['RMSE'] = raw_metrics['RMSE'] + net.accuracy_RMSE(sample_mu, labels[:, predict_start:], relative=relative)
+def update_metrics(
+    raw_metrics, 
+    input_mu, input_sigma, sample_mu, input_y_pred, sample_y_pred, 
+    labels, predict_start, samples=None, samples_y_pred=None, relative=False
+):
+    raw_metrics['ND-gauss'] = raw_metrics['ND-gauss'] + net.accuracy_ND(sample_mu, labels[:, predict_start:], relative=relative)
+    raw_metrics['RMSE-gauss'] = raw_metrics['RMSE-gauss'] + net.accuracy_RMSE(sample_mu, labels[:, predict_start:], relative=relative)
+    raw_metrics['ND-quant'] = raw_metrics['ND-quant'] + net.accuracy_ND(sample_y_pred, labels[:, predict_start:], relative=relative)
+    raw_metrics['RMSE-quant'] = raw_metrics['RMSE-quant'] + net.accuracy_RMSE(sample_y_pred, labels[:, predict_start:], relative=relative)
+    
     input_time_steps = input_mu.numel()
-    raw_metrics['test_loss'] = raw_metrics['test_loss'] + [
+    raw_metrics['test_loss-gauss'] = raw_metrics['test_loss-gauss'] + [
         net.l2_loss_fn(input_mu, input_sigma, labels[:, :predict_start]) * input_time_steps, input_time_steps]
+    
     if samples is not None:
-        raw_metrics['rou90'] = raw_metrics['rou90'] + net.accuracy_ROU(0.9, samples, labels[:, predict_start:], relative=relative)
-        raw_metrics['rou50'] = raw_metrics['rou50'] + net.accuracy_ROU(0.5, samples, labels[:, predict_start:], relative=relative)
-        raw_metrics['rou10'] = raw_metrics['rou10'] + net.accuracy_ROU(0.1, samples, labels[:, predict_start:], relative=relative)
+        raw_metrics['rou90-gauss'] = raw_metrics['rou90-gauss'] + net.accuracy_ROU(0.75, samples, labels[:, predict_start:], relative=relative)
+        raw_metrics['rou50-gauss'] = raw_metrics['rou50-gauss'] + net.accuracy_ROU(0.5, samples, labels[:, predict_start:], relative=relative)
+        raw_metrics['rou10-gauss'] = raw_metrics['rou10-gauss'] + net.accuracy_ROU(0.25, samples, labels[:, predict_start:], relative=relative)
+        
+        raw_metrics['rou90-quant'] = raw_metrics['rou90-quant'] + net.accuracy_ROU(0.75, samples_y_pred, labels[:, predict_start:], relative=relative)
+        raw_metrics['rou50-quant'] = raw_metrics['rou50-quant'] + net.accuracy_ROU(0.5, samples_y_pred, labels[:, predict_start:], relative=relative)
+        raw_metrics['rou10-quant'] = raw_metrics['rou10-quant'] + net.accuracy_ROU(0.25, samples_y_pred, labels[:, predict_start:], relative=relative)
     return raw_metrics
 
 
 def final_metrics(raw_metrics, sampling=False):
     summary_metric = {}
-    summary_metric['ND'] = raw_metrics['ND'][0] / raw_metrics['ND'][1]
-    summary_metric['RMSE'] = np.sqrt(raw_metrics['RMSE'][0] / raw_metrics['RMSE'][2]) / (
-                raw_metrics['RMSE'][1] / raw_metrics['RMSE'][2])
-    summary_metric['test_loss'] = (raw_metrics['test_loss'][0] / raw_metrics['test_loss'][1]).item()
+    summary_metric['ND-gauss'] = raw_metrics['ND-gauss'][0] / raw_metrics['ND-gauss'][1]
+    summary_metric['RMSE-gauss'] = np.sqrt(raw_metrics['RMSE-gauss'][0] / raw_metrics['RMSE-gauss'][2]) / (
+                raw_metrics['RMSE-gauss'][1] / raw_metrics['RMSE-gauss'][2])
+    summary_metric['ND-quant'] = raw_metrics['ND-quant'][0] / raw_metrics['ND-quant'][1]
+    summary_metric['RMSE-quant'] = np.sqrt(raw_metrics['RMSE-quant'][0] / raw_metrics['RMSE-quant'][2]) / (
+                raw_metrics['RMSE-quant'][1] / raw_metrics['RMSE-quant'][2])
+    
+    summary_metric['test_loss-gauss'] = (raw_metrics['test_loss-gauss'][0] / raw_metrics['test_loss-gauss'][1]).item()
+    
     if sampling:
-        summary_metric['rou90'] = raw_metrics['rou90'][0] / raw_metrics['rou90'][1]
-        summary_metric['rou50'] = raw_metrics['rou50'][0] / raw_metrics['rou50'][1]
-        summary_metric['rou10'] = raw_metrics['rou10'][0] / raw_metrics['rou10'][1]
+        summary_metric['rou90-gauss'] = raw_metrics['rou90-gauss'][0] / raw_metrics['rou90-gauss'][1]
+        summary_metric['rou50-gauss'] = raw_metrics['rou50-gauss'][0] / raw_metrics['rou50-gauss'][1]
+        summary_metric['rou10-gauss'] = raw_metrics['rou10-gauss'][0] / raw_metrics['rou10-gauss'][1]
+
+        summary_metric['rou90-quant'] = raw_metrics['rou90-quant'][0] / raw_metrics['rou90-quant'][1]
+        summary_metric['rou50-quant'] = raw_metrics['rou50-quant'][0] / raw_metrics['rou50-quant'][1]
+        summary_metric['rou10-quant'] = raw_metrics['rou10-quant'][0] / raw_metrics['rou10-quant'][1]
     return summary_metric
+
+def crps_from_samples(y_pred, samples):
+    num_samples = samples.shape[-1]
+    crps_first = np.mean(np.abs(samples - np.repeat(y_pred[..., np.newaxis], num_samples, axis = -1)))
+    crps_second = 0
+    for i in range(num_samples):
+        crps_second = crps_second+ np.mean(np.abs(samples- np.roll(samples, i, axis = -1)))/num_samples
+    return crps_first - crps_second/2

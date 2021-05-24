@@ -11,8 +11,8 @@ from torch.utils.data.sampler import RandomSampler
 from tqdm import tqdm
 
 import utils
-import model.net as net
-from evaluate import evaluate
+import model.net2 as net
+from evaluate_quantile import evaluate
 from dataloader import *
 
 import matplotlib
@@ -76,7 +76,10 @@ def train(model: nn.Module,
                 train_batch[t, zero_index, 0] = mu[zero_index]
             alpha = model.get_random_alpha([train_batch[t].shape[0], 1])
             mu, sigma, y_pred, hidden, cell = model(train_batch[t].unsqueeze_(0).clone(), alpha, idx, hidden, cell)
-            loss += loss_fn(mu, sigma, y_pred, alpha, labels_batch[t])
+            alpha_vec = torch.squeeze(alpha)
+            loss += loss_fn(mu, sigma, y_pred, alpha_vec, labels_batch[t])
+            if i==0 and t==0:
+                print(labels_batch[t][:10], alpha[:10], y_pred[:10])
 
         loss.backward()
         optimizer.step()
@@ -122,7 +125,7 @@ def train_and_evaluate(model: nn.Module,
     
     if os.path.exists(os.path.join(params.model_dir, 'metrics_test_best_weights.json')):
         with open(os.path.join(params.model_dir, 'metrics_test_best_weights.json')) as json_file:
-            best_test_ND = json.load(json_file)['ND']
+            best_test_ND = json.load(json_file)['ND-gauss']
             early_stopping.best_score = best_test_ND
     else:
         best_test_ND = float('inf')
@@ -145,7 +148,7 @@ def train_and_evaluate(model: nn.Module,
 #             print('NAN ')
 #             test_metrics['ND'] = 1000
         
-        ND_summary[epoch] = test_metrics['ND'] ##################################'ND'
+        ND_summary[epoch] = test_metrics['ND-gauss'] ##################################'ND'
         is_best = ND_summary[epoch] <= best_test_ND
 
         # Save weights
@@ -173,8 +176,8 @@ def train_and_evaluate(model: nn.Module,
         
         # early_stopping needs the validation loss to check if it has decresed, 
         # and if it has, it will make a checkpoint of the current model
-        logger.info('ND : %.5f ' % test_metrics['ND'])
-        early_stopping(test_metrics['ND'], model)
+        logger.info('ND : %.5f ' % test_metrics['ND-gauss'])
+        early_stopping(test_metrics['ND-gauss'], model)
         
         if early_stopping.early_stop:
             logger.info('Early stopping')
