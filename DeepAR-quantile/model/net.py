@@ -48,6 +48,7 @@ class Net(nn.Module):
 
         # add quantile stuff
         self.q_dense_1 = nn.Linear(params.lstm_hidden_dim * params.lstm_layers, 20)
+        self.alpha_transform = LambdaLayer(lambda alpha: torch.tan((alpha)*math.pi*0.9-0.9*math.pi/2))
         self.q_dense_2 = nn.Linear(20 + 1, 20) # alpha will be added here
         self.q_dense_3 = nn.Linear(20, 1)
 
@@ -78,7 +79,8 @@ class Net(nn.Module):
         sigma = self.distribution_sigma(pre_sigma)  # softplus to make sure standard deviation is positive
         
         q_dense_1_out = self.relu(self.q_dense_1(hidden_permute))
-        q_dense_2_out = self.relu(self.q_dense_2(torch.cat([q_dense_1_out, alpha], dim=1)))
+        alpha_t = self.alpha_transform(alpha)
+        q_dense_2_out = self.relu(self.q_dense_2(torch.cat([q_dense_1_out, alpha_t], dim=1)))
         q_out = self.q_dense_3(q_dense_2_out)
 
         return torch.squeeze(mu), torch.squeeze(sigma), torch.squeeze(q_out), hidden, cell
@@ -139,6 +141,38 @@ class Net(nn.Module):
             sample_mu = torch.median(samples, dim=0)[0]
             sample_sigma = samples.std(dim=0)
             return samples, sample_mu, sample_sigma
+
+        # else:
+        #     decoder_hidden = hidden
+        #     decoder_cell = cell
+        #     sample_mu = torch.zeros(batch_size, self.params.predict_steps, device=self.params.device)
+        #     sample_sigma = torch.zeros(batch_size, self.params.predict_steps, device=self.params.device)
+        #     sample_y_pred = torch.zeros(batch_size, self.params.predict_steps, device=self.params.device)
+        #     samples = torch.zeros(self.params.sample_times, batch_size, self.params.predict_steps,
+        #                                device=self.params.device)
+        #     # alpha is vector of 0.5's: ([num_steps, batch_size, 1])
+        #     alpha05 = self.get_constant_alpha([x.shape[0], x.shape[1], 1], 0.5)
+        #     for t in range(self.params.predict_steps):
+        #         mu_de, sigma_de, y_pred_de, decoder_hidden, decoder_cell = \
+        #             self(x[self.params.predict_start + t].unsqueeze(0), alpha[self.params.predict_start + t],
+        #                 id_batch, decoder_hidden, decoder_cell)
+        #         sample_mu[:, t] = mu_de * v_batch[:, 0] + v_batch[:, 1]
+        #         sample_sigma[:, t] = sigma_de * v_batch[:, 0]
+        #         sample_y_pred[:, t] = y_pred_de * v_batch[:, 0] + v_batch[:, 1] 
+        #         for j in range(self.params.sample_times):
+        #             if sampling_method=='quantile':
+        #                 samples[j, :, t] = y_pred_de * v_batch[:, 0] + v_batch[:, 1]
+        #             elif sampling_method=='gaussian':
+        #                 gaussian = torch.distributions.normal.Normal(mu_de, sigma_de)
+        #                 pred = gaussian.sample()  # not scaled
+        #                 samples[j, :, t] = pred * v_batch[:, 0] + v_batch[:, 1]
+        #         if t < (self.params.predict_steps - 1):
+        #             if sampling_method=='gaussian':
+        #                 x[self.params.predict_start + t + 1, :, 0] = mu_de
+        #             elif sampling_method=='quantile':
+        #                 x[self.params.predict_start + t + 1, :, 0] = y_pred_de
+
+        #     return sample_mu, sample_sigma, sample_y_pred
 
         else:
             decoder_hidden = hidden
@@ -340,3 +374,10 @@ def accuracy_ROU_(rou: float, samples: torch.Tensor, labels: torch.Tensor, relat
     result = numerator / denominator
     result[mask2] = -1
     return result
+
+class LambdaLayer(nn.Module):
+    def __init__(self, lambd):
+        super(LambdaLayer, self).__init__()
+        self.lambd = lambd
+    def forward(self, x):
+        return self.lambd(x)

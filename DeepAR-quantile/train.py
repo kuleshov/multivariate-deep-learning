@@ -11,7 +11,7 @@ from torch.utils.data.sampler import RandomSampler
 from tqdm import tqdm
 
 import utils
-import model.net2 as net
+import model.net as net
 from evaluate_quantile import evaluate
 from dataloader import *
 
@@ -85,10 +85,10 @@ def train(model: nn.Module,
         optimizer.step()
         loss = loss.item() / params.train_window  # loss per timestep
         loss_epoch[i] = loss
-        if i % 1000 == 0:
-            test_metrics = evaluate(model, loss_fn, test_loader, params, epoch, sample=args.sampling)
-            model.train()
-            logger.info(f'train_loss: {loss}')
+        # if i % 1000 == 0:
+        #     test_metrics = evaluate(model, loss_fn, test_loader, params, epoch, sample=args.sampling)
+        #     model.train()
+        #     logger.info(f'train_loss: {loss}')
         if i == 0:
             logger.info(f'train_loss: {loss}')
     return loss_epoch

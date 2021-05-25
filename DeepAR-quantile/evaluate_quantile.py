@@ -121,8 +121,8 @@ def evaluate(model, loss_fn, test_loader, params, plot_num, sample=True):
                 predict_start=params.test_predict_start,
                 relative = params.relative_metrics
               )
-              samples_gauss = torch.squeeze(sample_mu_gauss, 1)
-              samples_quant = torch.squeeze(sample_y_pred_quant, 1)
+              samples_gauss = torch.unsqueeze(sample_mu_gauss, 0)
+              samples_quant = torch.unsqueeze(sample_y_pred_quant, 0)
 
           samples_list += [samples_gauss]
           samples_y_pred_list += [samples_quant]

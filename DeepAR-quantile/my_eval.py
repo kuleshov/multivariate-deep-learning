@@ -47,6 +47,9 @@ params.model_dir = model_dir
 params.save_file = args.save_file
 params.plot_dir = os.path.join(model_dir, 'figures')
 
+LOOKAHEAD = 24
+params.test_window = min(params.test_window, params.test_predict_start+LOOKAHEAD)
+
 cuda_exist = torch.cuda.is_available()  # use GPU is available
 
 # Set random seeds for reproducible experiments if necessary
@@ -89,6 +92,11 @@ labels_all = np.load(os.path.join(params.model_dir, 'labels_all.npy'))
 samples_all_gauss = np.load(os.path.join(params.model_dir, 'samples_all_gauss.npy'))
 samples_all_quant = np.load(os.path.join(params.model_dir, 'samples_all_quant.npy'))
 
+# truncate if necessary
+labels_all = labels_all[:,:params.test_predict_start+LOOKAHEAD]
+samples_all_gauss = samples_all_gauss[:,:LOOKAHEAD,:]
+samples_all_quant = samples_all_quant[:,:LOOKAHEAD,:]
+
 # compute CRPS
 print('CRPS-gauss:', utils.crps_from_samples(labels_all[:,params.test_predict_start:], samples_all_gauss))
 print('CRPS-quant:', utils.crps_from_samples(labels_all[:,params.test_predict_start:], samples_all_quant))
@@ -106,9 +114,11 @@ quantile_indicators_gauss = labels_all_expanded <= quantiles_gauss
 quantile_indicators_quant = labels_all_expanded <= quantiles_quant
 calibration_gauss = quantile_indicators_gauss.mean(axis=2).mean(axis=1)
 calibration_quant = quantile_indicators_quant.mean(axis=2).mean(axis=1)
+# calibration_counts_gauss = quantile_indicators_gauss.sum(axis=2).sum(axis=1)
+# calibration_counts_quant = quantile_indicators_quant.sum(axis=2).sum(axis=1)
 print(quantiles)
-print(calibration_gauss)
-print(calibration_quant)
+print(calibration_gauss, np.abs(calibration_gauss-quantiles).mean())
+print(calibration_quant, np.abs(calibration_quant-quantiles).mean())
 print()
 
 print(quantiles)
@@ -122,6 +132,7 @@ def plot_eight_windows(plot_dir,
                        predict_top,
                        predict_bottom,
                        labels,
+                       samples,
                        window_size,
                        predict_start,
                        plot_name):
@@ -145,6 +156,11 @@ def plot_eight_windows(plot_dir,
                          alpha=0.2)
         ax[k].plot(x, labels[m, :], color='r')
         ax[k].axvline(predict_start, color='g', linestyle='dashed')
+        # create scatter plot
+        # points = np.concatenate([
+        #   x[predict_start:, np.newaxis, np.newaxis], 
+        #   samples[:, :, np.newaxis]
+        # ], axis=2)
 
     f.savefig(os.path.join(plot_dir, str(plot_name) + '.png'))
     plt.close()
@@ -181,15 +197,81 @@ def plot_eight_windows(plot_dir,
 #   params.test_window, params.test_predict_start, 'plots-quant'
 # )
 
-first_plot = 50
+np.random.seed(0)
+# random_sample = np.concatenate([
+#   np.random.choice(range(1000), size=10, replace=False),
+#   np.random.choice(range(samples_all_gauss.shape[0]), size=10, replace=False)
+# ])
+random_sample = np.random.choice(range(samples_all_gauss.shape[0]), size=20, replace=False)
+
 plot_mean = np.concatenate([input_mu_all, quantiles_gauss[4,:,:]], axis=1)
 plot_eight_windows(
-  '.', plot_mean[first_plot:], quantiles_gauss[-1,first_plot:,:], quantiles_gauss[0,first_plot:,:], labels_all[first_plot:], 
+  '.', plot_mean[random_sample], quantiles_gauss[-1,random_sample,:], 
+  quantiles_gauss[0,random_sample,:], labels_all[random_sample], samples_all_gauss[random_sample],
   params.test_window, params.test_predict_start, 'plots-gauss'
 )
 
 plot_mean = np.concatenate([input_mu_all, quantiles_quant[4,:,:]], axis=1)
 plot_eight_windows(
-  '.', plot_mean[first_plot:], quantiles_quant[-1,first_plot:,:], quantiles_quant[0,first_plot:,:], labels_all[first_plot:], 
+  '.', plot_mean[random_sample], quantiles_quant[-1,random_sample,:], 
+  quantiles_quant[0,random_sample,:], labels_all[random_sample], samples_all_gauss[random_sample],
   params.test_window, params.test_predict_start, 'plots-quant'
 )
+
+
+# compute CRPS
+samples_all_gauss_bak = samples_all_gauss.copy()
+samples_all_quant_bak = samples_all_quant.copy()
+labels_all_bak = labels_all.copy()
+crps_gauss, crps_quant, cal_err_gauss, cal_err_quant = [], [], [], []
+random_sample = np.random.choice(range(samples_all_gauss.shape[0]), size=10000, replace=False)
+# for i in range(samples_all_gauss_bak.shape[0]):
+for i in random_sample:
+  samples_all_gauss = samples_all_gauss_bak[[[i]]]
+  samples_all_quant = samples_all_quant_bak[[i]]
+  labels_all = labels_all_bak[[i]]
+  crps_gauss += [utils.crps_from_samples(labels_all[:,params.test_predict_start:], samples_all_gauss)]
+  crps_quant += [utils.crps_from_samples(labels_all[:,params.test_predict_start:], samples_all_quant)]
+  # print(i, 'CRPS-gauss:', utils.crps_from_samples(labels_all[:,params.test_predict_start:], samples_all_gauss))
+  # print(i, 'CRPS-quant:', utils.crps_from_samples(labels_all[:,params.test_predict_start:], samples_all_quant))
+
+  # compute effective predicted quantiles
+  quantiles = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9])
+  # quantiles_gauss has shape ([num_quantiles, num_data, pred_steps])
+  quantiles_gauss = np.quantile(samples_all_gauss, quantiles, axis=2)
+  quantiles_quant = np.quantile(samples_all_quant, quantiles, axis=2)
+
+  # compute calibration
+  pred_steps = samples_all_gauss.shape[1]
+  labels_all_expanded = labels_all[np.newaxis, :, params.test_predict_start:] # (1, num_data, pred_steps)
+  quantile_indicators_gauss = labels_all_expanded <= quantiles_gauss
+  quantile_indicators_quant = labels_all_expanded <= quantiles_quant
+  calibration_gauss = quantile_indicators_gauss.mean(axis=2).mean(axis=1)
+  calibration_quant = quantile_indicators_quant.mean(axis=2).mean(axis=1)
+  cal_err_gauss += [np.abs(calibration_gauss-quantiles).mean()]
+  cal_err_quant += [np.abs(calibration_quant-quantiles).mean()]
+  # print(quantiles)
+  # print(calibration_gauss)
+  # print(calibration_quant)
+  # print()
+
+  # # print(quantiles)
+  # # for i in range(3):
+  # #   print(quantile_indicators_gauss.mean(axis=2)[:,i])
+  # #   print(quantile_indicators_quant.mean(axis=2)[:,i])
+
+crps_quant = np.array(crps_quant)
+crps_gauss = np.array(crps_gauss)
+crps_avrge = (crps_gauss + crps_quant)/2
+crps_diffr = crps_gauss - crps_quant
+print('Same:', np.sum((np.abs(crps_diffr) / crps_avrge) <= 0.05))
+print('Gauss better:', np.sum((crps_diffr / crps_avrge) < -0.05))
+print('Quant better:', np.sum((crps_diffr / crps_avrge) > 0.05))
+
+cal_err_quant = np.array(cal_err_quant)
+cal_err_gauss = np.array(cal_err_gauss)
+cal_err_avrge = (cal_err_gauss + cal_err_quant)/2
+cal_err_diffr = cal_err_gauss - cal_err_quant
+print('Same:', np.sum((np.abs(cal_err_diffr) / cal_err_avrge) <= 0.10))
+print('Gauss better:', np.sum((cal_err_diffr / cal_err_avrge) < -0.10))
+print('Quant better:', np.sum((cal_err_diffr / cal_err_avrge) > 0.10))
